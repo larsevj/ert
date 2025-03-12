@@ -114,16 +114,14 @@ class Job:
                 await self._send(JobState.SUBMITTING)
                 submit_time = time.time()
                 try:
-                    await asyncio.shield(
-                        self.driver.submit(
-                            self.real.iens,
-                            self.real.job_script,
-                            self.real.run_arg.runpath,
-                            num_cpu=self.real.num_cpu,
-                            realization_memory=self.real.realization_memory,
-                            name=self.real.run_arg.job_name,
-                            runpath=Path(self.real.run_arg.runpath),
-                        )
+                    await self.driver.submit(
+                        self.real.iens,
+                        self.real.job_script,
+                        self.real.run_arg.runpath,
+                        num_cpu=self.real.num_cpu,
+                        realization_memory=self.real.realization_memory,
+                        name=self.real.run_arg.job_name,
+                        runpath=Path(self.real.run_arg.runpath),
                     )
                 except FailedSubmit as err:
                     await self._send(JobState.FAILED)
