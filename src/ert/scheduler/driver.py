@@ -116,7 +116,11 @@ class Driver(ABC):
                 )
             except FileNotFoundError as e:
                 return (False, str(e))
-            except OSError:
+            except OSError as e:
+                logger.error(
+                    f"Something went wrong in execute of {cmd_with_args} error: {e}"
+                )
+                print("Yes retrying due to OSError!")
                 await asyncio.sleep(retry_interval)
                 continue
 
