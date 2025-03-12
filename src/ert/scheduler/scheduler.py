@@ -262,7 +262,8 @@ class Scheduler:
             )
             scheduling_tasks.append(asyncio.create_task(self._update_avg_job_runtime()))
 
-        sem = asyncio.BoundedSemaphore(self._max_running or len(self._jobs))
+        run_sem = asyncio.BoundedSemaphore(self._max_running or len(self._jobs))
+        kill_sem = asyncio.BoundedSemaphore(10)
         # this lock is to assure that no more than 1 task
         # does internalization at a time
         forward_model_ok_lock = asyncio.Lock()
@@ -272,7 +273,8 @@ class Scheduler:
             if job.state != JobState.ABORTED:
                 self._job_tasks[iens] = asyncio.create_task(
                     job.run(
-                        sem,
+                        run_sem,
+                        kill_sem,
                         forward_model_ok_lock,
                         verify_checksum_lock,
                         self._max_submit,

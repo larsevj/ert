@@ -68,7 +68,7 @@ class Driver(ABC):
         """
 
     @abstractmethod
-    async def kill(self, iens: int) -> None:
+    async def kill(self, iens: int, sem: asyncio.BoundedSemaphore) -> None:
         """Terminate execution of a job associated with a realization.
 
         Args:

@@ -102,66 +102,67 @@ class Job:
             return time.time() - self._start_time
         return 0
 
-    async def _submit_and_run_once(self, sem: asyncio.BoundedSemaphore) -> None:
+    async def _submit_and_run_once(
+        self, run_sem: asyncio.BoundedSemaphore, kill_sem: asyncio.BoundedSemaphore
+    ) -> None:
         await self._send(JobState.WAITING)
-        await sem.acquire()
         timeout_task: asyncio.Task[None] | None = None
-
-        try:
-            if self._scheduler.submit_sleep_state:
-                await self._scheduler.submit_sleep_state.sleep_until_we_can_submit()
-            await self._send(JobState.SUBMITTING)
-            submit_time = time.time()
+        async with run_sem:
             try:
-                await self.driver.submit(
-                    self.real.iens,
-                    self.real.job_script,
-                    self.real.run_arg.runpath,
-                    num_cpu=self.real.num_cpu,
-                    realization_memory=self.real.realization_memory,
-                    name=self.real.run_arg.job_name,
-                    runpath=Path(self.real.run_arg.runpath),
+                if self._scheduler.submit_sleep_state:
+                    await self._scheduler.submit_sleep_state.sleep_until_we_can_submit()
+                await self._send(JobState.SUBMITTING)
+                submit_time = time.time()
+                try:
+                    await self.driver.submit(
+                        self.real.iens,
+                        self.real.job_script,
+                        self.real.run_arg.runpath,
+                        num_cpu=self.real.num_cpu,
+                        realization_memory=self.real.realization_memory,
+                        name=self.real.run_arg.job_name,
+                        runpath=Path(self.real.run_arg.runpath),
+                    )
+                except FailedSubmit as err:
+                    await self._send(JobState.FAILED)
+                    logger.error(f"Failed to submit: {err}")
+                    self.returncode.cancel()
+                    return
+
+                await self._send(JobState.PENDING)
+                await self.started.wait()
+                self._start_time = time.time()
+                pending_time = self._start_time - submit_time
+                logger.info(
+                    f"Pending time for realization {self.iens} "
+                    f"was {pending_time:.2f} seconds "
+                    f"(num_cpu={self.real.num_cpu} realization_memory={self.real.realization_memory})"
                 )
-            except FailedSubmit as err:
-                await self._send(JobState.FAILED)
-                logger.error(f"Failed to submit: {err}")
-                self.returncode.cancel()
-                return
 
-            await self._send(JobState.PENDING)
-            await self.started.wait()
-            self._start_time = time.time()
-            pending_time = self._start_time - submit_time
-            logger.info(
-                f"Pending time for realization {self.iens} "
-                f"was {pending_time:.2f} seconds "
-                f"(num_cpu={self.real.num_cpu} realization_memory={self.real.realization_memory})"
-            )
+                await self._send(JobState.RUNNING)
+                if self.real.max_runtime is not None and self.real.max_runtime > 0:
+                    timeout_task = asyncio.create_task(self._max_runtime_task())
+                if not self._scheduler.warnings_extracted:
+                    self._scheduler.warnings_extracted = True
+                    await log_warnings_from_forward_model(self.real)
 
-            await self._send(JobState.RUNNING)
-            if self.real.max_runtime is not None and self.real.max_runtime > 0:
-                timeout_task = asyncio.create_task(self._max_runtime_task())
-            if not self._scheduler.warnings_extracted:
-                self._scheduler.warnings_extracted = True
-                await log_warnings_from_forward_model(self.real)
+                await self.returncode
 
-            await self.returncode
-
-        except asyncio.CancelledError:
-            await self._send(JobState.ABORTING)
-            await self.driver.kill(self.iens)
-            with suppress(asyncio.CancelledError):
-                self.returncode.cancel()
-            await self._send(JobState.ABORTED)
-        finally:
-            if timeout_task and not timeout_task.done():
-                timeout_task.cancel()
-            sem.release()
+            except asyncio.CancelledError:
+                await self._send(JobState.ABORTING)
+                await self.driver.kill(self.iens, kill_sem)
+                with suppress(asyncio.CancelledError):
+                    self.returncode.cancel()
+                await self._send(JobState.ABORTED)
+            finally:
+                if timeout_task and not timeout_task.done():
+                    timeout_task.cancel()
 
     @tracer.start_as_current_span(f"{__name__}.run")
     async def run(
         self,
-        sem: asyncio.BoundedSemaphore,
+        run_sem: asyncio.BoundedSemaphore,
+        kill_sem: asyncio.BoundedSemaphore,
         forward_model_ok_lock: asyncio.Lock,
         checksum_lock: asyncio.Lock,
         max_submit: int = 1,
@@ -170,7 +171,7 @@ class Job:
         current_span.set_attribute("ert.realization_number", self.iens)
         self._requested_max_submit = max_submit
         for attempt in range(max_submit):
-            await self._submit_and_run_once(sem)
+            await self._submit_and_run_once(run_sem, kill_sem)
 
             if self.returncode.cancelled() or self._scheduler._cancelled:
                 break
