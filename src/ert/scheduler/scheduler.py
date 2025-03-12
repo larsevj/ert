@@ -263,7 +263,7 @@ class Scheduler:
             scheduling_tasks.append(asyncio.create_task(self._update_avg_job_runtime()))
 
         run_sem = asyncio.BoundedSemaphore(self._max_running or len(self._jobs))
-        kill_sem = asyncio.BoundedSemaphore(10)
+        kill_sem = asyncio.BoundedSemaphore(50)
         # this lock is to assure that no more than 1 task
         # does internalization at a time
         forward_model_ok_lock = asyncio.Lock()
