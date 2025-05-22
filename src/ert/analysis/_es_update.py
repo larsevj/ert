@@ -301,9 +301,19 @@ def analysis_ES(
             config_node = source_ensemble.experiment.parameter_configuration[
                 param_group
             ]
-            num_params = param_ensemble_array.shape[0]
+            num_params_initial = param_ensemble_array.shape[0]
+            non_zero_std_mask = np.var(param_ensemble_array, axis=1) != 0
+            non_zero_indices = np.where(non_zero_std_mask)[0]
+            num_params = np.sum(non_zero_std_mask)
+
+            if removed_params := (num_params_initial - num_params) > 0:
+                logger.info(
+                    f"Removed {removed_params} parameters from update due to 0 std."
+                )
+                print(f"Removed {removed_params} parameters from update due to 0 std.")
+
             batch_size = _calculate_adaptive_batch_size(num_params, num_obs)
-            batches = _split_by_batchsize(np.arange(0, num_params), batch_size)
+            batches = _split_by_batchsize(non_zero_indices, batch_size)
 
             log_msg = (
                 f"Running localization on {num_params} parameters, "
@@ -311,6 +321,7 @@ def analysis_ES(
                 f"and {len(batches)} batches"
             )
             logger.info(log_msg)
+
             progress_callback(AnalysisStatusEvent(msg=log_msg))
 
             start = time.time()
